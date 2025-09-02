@@ -1,48 +1,33 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const cors = require("cors");
+// server.js
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
 
 const app = express();
-app.use(cors());
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*" }
 });
 
-const port = process.env.PORT || 3000;
-
-const sessions = new Map();
+const onlineSessions = new Set();
 
 io.on("connection", (socket) => {
-  console.log("Client connected:", socket.id);
+  console.log("User connected:", socket.id);
 
-  socket.on("join-session", (data) => {
-    const sessionId = data.sessionId || "unknown";
-    socket.data.sessionId = sessionId;
+  socket.on("joinSession", (sessionId) => {
+    socket.sessionId = sessionId;
+    onlineSessions.add(sessionId);
 
-    if (!sessions.has(sessionId)) sessions.set(sessionId, new Set());
-    sessions.get(sessionId).add(socket.id);
-
-    const count = sessions.get(sessionId).size;
-
-    // emit both-present to all in session
-    sessions.get(sessionId).forEach(sId => {
-      io.to(sId).emit("both-present", { sessionId, bothPresent: count >= 2 });
-    });
+    // Notify other users with same sessionId
+    socket.broadcast.emit("sessionOnline", { sessionId });
   });
 
   socket.on("disconnect", () => {
-    const sessionId = socket.data.sessionId;
-    if (sessionId && sessions.has(sessionId)) {
-      sessions.get(sessionId).delete(socket.id);
-      const count = sessions.get(sessionId).size;
-      sessions.get(sessionId).forEach(sId => {
-        io.to(sId).emit("both-present", { sessionId, bothPresent: count >= 2 });
-      });
-      if (count === 0) sessions.delete(sessionId);
+    if (socket.sessionId) {
+      onlineSessions.delete(socket.sessionId);
+      socket.broadcast.emit("sessionOffline", { sessionId: socket.sessionId });
     }
   });
 });
 
-server.listen(port, () => console.log(`Server running on port ${port}`));
+server.listen(3000, () => console.log("Server running on port 3000"));
