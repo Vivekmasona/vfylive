@@ -5,33 +5,38 @@ import { Server } from "socket.io";
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "*" }
+    cors: { origin: "*" }
 });
 
-const sessionUsers = {}; // sessionId -> Set of socketIds
+app.use(express.json());
 
+// In-memory store for session IDs (replace with DB for production)
+let sessions = {};
+
+app.post("/register-session", (req, res) => {
+    const { sessionId } = req.body;
+    if (!sessionId) return res.status(400).send("No sessionId provided");
+
+    sessions[sessionId] = Date.now(); // Store timestamp
+    res.send({ status: "ok" });
+});
+
+// Serve static files (frontend)
+app.use(express.static("public"));
+
+// Socket.io for real-time online detection
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+    socket.on("join-session", (sessionId) => {
+        socket.join(sessionId);
 
-  // User joins a session
-  socket.on("joinSession", (sessionId) => {
-    socket.sessionId = sessionId;
-    if (!sessionUsers[sessionId]) sessionUsers[sessionId] = new Set();
-    sessionUsers[sessionId].add(socket.id);
+        // Notify other devices with same sessionId
+        socket.to(sessionId).emit("user-online", { sessionId });
+    });
 
-    // Agar 2 ya usse zyada users same sessionId pe hain, dusro ko notify karo
-    if (sessionUsers[sessionId].size > 1) {
-      socket.broadcast.emit("sessionOnline", { sessionId });
-    }
-  });
-
-  socket.on("disconnect", () => {
-    const sessionId = socket.sessionId;
-    if (sessionId && sessionUsers[sessionId]) {
-      sessionUsers[sessionId].delete(socket.id);
-      if (sessionUsers[sessionId].size === 0) delete sessionUsers[sessionId];
-    }
-  });
+    socket.on("disconnect", () => {
+        // Optional: handle disconnect
+    });
 });
 
-server.listen(3000, () => console.log("Server running on port 3000"));
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
