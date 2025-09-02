@@ -5,52 +5,57 @@ const cors = require("cors");
 
 const app = express();
 app.use(cors());
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*" }
 });
 
-const port = process.env.PORT || 3000;
-
-// Map: sessionId -> Set of socket ids
+// Map sessionId -> Set of socketIds
 const sessions = new Map();
 
 io.on("connection", (socket) => {
-  console.log("Client connected:", socket.id);
+  console.log("New client connected:", socket.id);
 
-  socket.on("join-session", (data) => {
-    const sessionId = (data && data.sessionId) ? String(data.sessionId) : "unknown";
-    socket.data.sessionId = sessionId;
+  // Client joins a sessionId
+  socket.on("join-session", (sessionId) => {
+    socket.sessionId = sessionId;
 
-    if (!sessions.has(sessionId)) sessions.set(sessionId, new Set());
-    sessions.get(sessionId).add(socket.id);
-
-    const count = sessions.get(sessionId).size;
-
-    for (let sId of sessions.get(sessionId)) {
-      io.to(sId).emit("session-count", { sessionId, count });
-      io.to(sId).emit("both-present", { sessionId, bothPresent: count >= 2 });
+    if (!sessions.has(sessionId)) {
+      sessions.set(sessionId, new Set());
     }
+
+    const clients = sessions.get(sessionId);
+    clients.add(socket.id);
+    sessions.set(sessionId, clients);
+
+    // Notify all clients in the same session
+    io.to(sessionId).emit("update-status", {
+      onlineCount: clients.size,
+      message: "A device joined this session"
+    });
+
+    socket.join(sessionId);
   });
 
+  // Disconnect
   socket.on("disconnect", () => {
-    const sessionId = socket.data.sessionId;
+    const sessionId = socket.sessionId;
     if (sessionId && sessions.has(sessionId)) {
-      sessions.get(sessionId).delete(socket.id);
-      const count = sessions.get(sessionId).size;
-      for (let sId of sessions.get(sessionId)) {
-        io.to(sId).emit("session-count", { sessionId, count });
-        io.to(sId).emit("both-present", { sessionId, bothPresent: count >= 2 });
+      const clients = sessions.get(sessionId);
+      clients.delete(socket.id);
+      if (clients.size === 0) {
+        sessions.delete(sessionId);
+      } else {
+        sessions.set(sessionId, clients);
+        io.to(sessionId).emit("update-status", {
+          onlineCount: clients.size,
+          message: "A device left this session"
+        });
       }
-      if (count === 0) sessions.delete(sessionId);
     }
   });
 });
 
-app.get("/", (req, res) => {
-  res.send("Socket.IO server is running âœ…");
-});
-
-server.listen(port, () => {
-  console.log(`Listening on http://localhost:${port}`);
-});
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
