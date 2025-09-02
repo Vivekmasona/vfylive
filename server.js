@@ -12,14 +12,13 @@ const io = new Server(server, {
 
 const port = process.env.PORT || 3000;
 
-// Map: sessionId -> Set of socket ids
 const sessions = new Map();
 
 io.on("connection", (socket) => {
   console.log("Client connected:", socket.id);
 
   socket.on("join-session", (data) => {
-    const sessionId = (data && data.sessionId) ? String(data.sessionId) : "unknown";
+    const sessionId = data.sessionId || "unknown";
     socket.data.sessionId = sessionId;
 
     if (!sessions.has(sessionId)) sessions.set(sessionId, new Set());
@@ -27,10 +26,10 @@ io.on("connection", (socket) => {
 
     const count = sessions.get(sessionId).size;
 
-    for (let sId of sessions.get(sessionId)) {
-      io.to(sId).emit("session-count", { sessionId, count });
+    // emit both-present to all in session
+    sessions.get(sessionId).forEach(sId => {
       io.to(sId).emit("both-present", { sessionId, bothPresent: count >= 2 });
-    }
+    });
   });
 
   socket.on("disconnect", () => {
@@ -38,19 +37,12 @@ io.on("connection", (socket) => {
     if (sessionId && sessions.has(sessionId)) {
       sessions.get(sessionId).delete(socket.id);
       const count = sessions.get(sessionId).size;
-      for (let sId of sessions.get(sessionId)) {
-        io.to(sId).emit("session-count", { sessionId, count });
+      sessions.get(sessionId).forEach(sId => {
         io.to(sId).emit("both-present", { sessionId, bothPresent: count >= 2 });
-      }
+      });
       if (count === 0) sessions.delete(sessionId);
     }
   });
 });
 
-app.get("/", (req, res) => {
-  res.send("Socket.IO server is running ✅");
-});
-
-server.listen(port, () => {
-  console.log(`Listening on http://localhost:${port}`);
-});
+server.listen(port, () => console.log(`Server running on port ${port}`));
