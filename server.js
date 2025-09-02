@@ -1,30 +1,37 @@
-const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = new Server(server, {
+  cors: { origin: "*" }
+});
 
-let onlineSessions = new Set();
+const sessionUsers = {}; // sessionId -> Set of socketIds
 
-io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
 
-  socket.on('joinSession', (sessionId) => {
+  // User joins a session
+  socket.on("joinSession", (sessionId) => {
     socket.sessionId = sessionId;
-    onlineSessions.add(sessionId);
-    socket.broadcast.emit('sessionOnline', { sessionId });
+    if (!sessionUsers[sessionId]) sessionUsers[sessionId] = new Set();
+    sessionUsers[sessionId].add(socket.id);
+
+    // Agar 2 ya usse zyada users same sessionId pe hain, dusro ko notify karo
+    if (sessionUsers[sessionId].size > 1) {
+      socket.broadcast.emit("sessionOnline", { sessionId });
+    }
   });
 
-  socket.on('disconnect', () => {
-    if (socket.sessionId) {
-      onlineSessions.delete(socket.sessionId);
-      socket.broadcast.emit('sessionOffline', { sessionId: socket.sessionId });
+  socket.on("disconnect", () => {
+    const sessionId = socket.sessionId;
+    if (sessionId && sessionUsers[sessionId]) {
+      sessionUsers[sessionId].delete(socket.id);
+      if (sessionUsers[sessionId].size === 0) delete sessionUsers[sessionId];
     }
   });
 });
 
-server.listen(3000, () => {
-  console.log('Server running on port 3000');
-});
+server.listen(3000, () => console.log("Server running on port 3000"));
