@@ -1,66 +1,47 @@
-import express from "express";
-import cors from "cors";
+// server.js
+const express = require("express");
+const cors = require("cors");
 
 const app = express();
 app.use(cors());
-app.use(express.json());
 
-// In-memory presence store: sessionId -> Map(deviceId -> lastSeenMs)
-const presence = new Map();
+// Map: sessionId -> { deviceId -> lastSeen }
+const sessions = new Map();
 
-// Config
-const ONLINE_TTL_MS = 90_000;   // 90s के अंदर ping आया तो online माने
-const CLEANUP_EVERY_MS = 30_000;
-
-function touch(sessionId, deviceId) {
-  if (!presence.has(sessionId)) presence.set(sessionId, new Map());
-  presence.get(sessionId).set(deviceId, Date.now());
-}
-
-function getOnlinePeers(sessionId) {
-  const now = Date.now();
-  const map = presence.get(sessionId) || new Map();
-  // TTL के आधार पर साफ करना
-  for (const [dev, seen] of [...map.entries()]) {
-    if (now - seen > ONLINE_TTL_MS) map.delete(dev);
-  }
-  // अगर खाली हो गया तो session हटाओ
-  if (map.size === 0) presence.delete(sessionId);
-  return [...map.keys()];
-}
-
-// हर 30s global cleanup
-setInterval(() => {
-  for (const sid of [...presence.keys()]) getOnlinePeers(sid);
-}, CLEANUP_EVERY_MS);
-
-// 1) Heartbeat ping (POST/GET दोनों सपोर्ट)
-app.post("/ping", (req, res) => {
-  const { sessionId, deviceId } = req.body || {};
-  if (!sessionId || !deviceId) return res.status(400).json({ ok: false, error: "sessionId & deviceId required" });
-  touch(sessionId, deviceId);
-  const peers = getOnlinePeers(sessionId);
-  res.json({ ok: true, onlineCount: peers.length, peers });
-});
-
+// हर /ping पर user का lastSeen update होगा
 app.get("/ping", (req, res) => {
   const { sessionId, deviceId } = req.query;
-  if (!sessionId || !deviceId) return res.status(400).json({ ok: false, error: "sessionId & deviceId required" });
-  touch(sessionId, deviceId);
-  const peers = getOnlinePeers(sessionId);
-  res.json({ ok: true, onlineCount: peers.length, peers });
+  if (!sessionId || !deviceId) {
+    return res.json({ ok: false });
+  }
+
+  const now = Date.now();
+  if (!sessions.has(sessionId)) {
+    sessions.set(sessionId, new Map());
+  }
+
+  const devices = sessions.get(sessionId);
+  devices.set(deviceId, now);
+
+  // inactive devices साफ करो ( >15s से कोई ping नहीं आया)
+  for (let [d, last] of devices.entries()) {
+    if (now - last > 15000) {
+      devices.delete(d);
+    }
+  }
+
+  const onlineCount = devices.size;
+  res.json({ ok: true, onlineCount });
 });
 
-// 2) Presence status
-app.get("/presence", (req, res) => {
-  const { sessionId } = req.query;
-  if (!sessionId) return res.status(400).json({ ok: false, error: "sessionId required" });
-  const peers = getOnlinePeers(sessionId);
-  res.json({ ok: true, onlineCount: peers.length, peers });
+// सिर्फ debug/test के लिए
+app.get("/status", (req, res) => {
+  const output = {};
+  for (let [sid, devices] of sessions.entries()) {
+    output[sid] = Array.from(devices.keys());
+  }
+  res.json(output);
 });
-
-// 3) Simple health
-app.get("/", (req, res) => res.send("Presence server running (no websockets)"));
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log("Presence server listening on", port));
+app.listen(port, () => console.log(`Server running on ${port}`));
